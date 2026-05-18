@@ -22,7 +22,6 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using Windows.Kinect;
 using System;
 using System.IO;
 using System.Runtime.Serialization.Formatters.Binary;
@@ -43,7 +42,7 @@ namespace ARSandbox.TopographyBuilder
 
         private const string TOPOGRAPHY_FILE_NAME_LIST = "SavedTopographyNames.props";
         private const string SAVE_DIRECTORY_FOLDER = "TopographyBuilder";
-        private FrameDescription kinectFrameDesc;
+        private DepthFrameDescriptor kinectFrameDesc;
         public float ValidHeightRange { get; private set; }
         public float HeightOffset { get; private set; }
 

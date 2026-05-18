@@ -1,4 +1,4 @@
-﻿//  
+//
 //  KinectManager.cs
 //
 //	Copyright 2021 SensiLab, Monash University <sensilab@monash.edu>
@@ -9,12 +9,12 @@
 //  it under the terms of the GNU General Public License as published by
 //  the Free Software Foundation, either version 3 of the License, or
 //  (at your option) any later version.
-// 
+//
 //  sensilab-ar-sandbox is distributed in the hope that it will be useful,
 //  but WITHOUT ANY WARRANTY; without even the implied warranty of
 //  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //  GNU General Public License for more details.
-// 
+//
 //  You should have received a copy of the GNU General Public License
 //  along with sensilab-ar-sandbox.  If not, see <https://www.gnu.org/licenses/>.
 //
@@ -22,27 +22,45 @@
 using UnityEngine;
 using System.Collections;
 using System.IO;
+#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
 using Windows.Kinect;
+#endif
 
 namespace ARSandbox
 {
     public class KinectManager : MonoBehaviour
     {
+        // Kinect v2 depth stream is a fixed 512x424 per hardware spec.
+        // Used as the descriptor when no sensor is queried (Linux saved-data fallback).
+        private const int KINECT_V2_DEPTH_WIDTH = 512;
+        private const int KINECT_V2_DEPTH_HEIGHT = 424;
+
         public bool UseSavedData;
         public TextAsset SavedData;
 
         public delegate void OnDataStarted_Delegate();
         public static event OnDataStarted_Delegate OnDataStarted;
 
-        private FrameDescription kinectFrameDesc;
+        private DepthFrameDescriptor kinectFrameDesc;
+#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
         private KinectSensor kinectSensor;
         private DepthFrameReader depthFrameReader;
+#endif
         private ushort[] depthData;
         private bool dataReady = false;
         private bool newData = false;
 
         void Start()
         {
+#if UNITY_STANDALONE_LINUX || UNITY_EDITOR_LINUX
+            // Linux: Microsoft Kinect SDK is unavailable; libfreenect2 integration
+            // is a later port phase. Force saved-data playback so the simulations
+            // can still run end-to-end against the recorded depth frame.
+            UseSavedData = true;
+            kinectFrameDesc = new DepthFrameDescriptor(KINECT_V2_DEPTH_WIDTH, KINECT_V2_DEPTH_HEIGHT);
+            LoadDepthData();
+            StartCoroutine(Emulate30Hz());
+#else
             if (GetFrameDescriptor())
             {
                 if (UseSavedData)
@@ -55,10 +73,12 @@ namespace ARSandbox
                     SetUpKinectBuffer();
                 }
             }
+#endif
         }
 
         void Update()
         {
+#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
             if (!UseSavedData)
             {
                 if (depthFrameReader != null)
@@ -83,10 +103,12 @@ namespace ARSandbox
                     //SaveDepthData();
                 }
             }
+#endif
         }
 
         void OnApplicationQuit()
         {
+#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
             if (!UseSavedData)
             {
                 if (depthFrameReader != null)
@@ -105,6 +127,7 @@ namespace ARSandbox
                     kinectSensor = null;
                 }
             }
+#endif
         }
         private IEnumerator Emulate30Hz()
         {
@@ -120,7 +143,7 @@ namespace ARSandbox
                 }
             }
         }
-        public FrameDescription GetKinectFrameDescriptor()
+        public DepthFrameDescriptor GetKinectFrameDescriptor()
         {
             return kinectFrameDesc;
         }
@@ -147,12 +170,14 @@ namespace ARSandbox
             return newData;
         }
 
+#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
         private bool GetFrameDescriptor()
         {
             kinectSensor = KinectSensor.GetDefault();
             if (kinectSensor != null)
             {
-                kinectFrameDesc = kinectSensor.DepthFrameSource.FrameDescription;
+                FrameDescription fd = kinectSensor.DepthFrameSource.FrameDescription;
+                kinectFrameDesc = new DepthFrameDescriptor(fd.Width, fd.Height);
                 return true;
             }
             else
@@ -175,6 +200,7 @@ namespace ARSandbox
                 depthData = new ushort[kinectSensor.DepthFrameSource.FrameDescription.LengthInPixels];
             }
         }
+#endif
 
         private void LoadDepthData()
         {

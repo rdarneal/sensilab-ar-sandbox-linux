@@ -21,7 +21,6 @@
 
 using System;
 using UnityEngine;
-using Windows.Kinect;
 
 namespace ARSandbox
 {
@@ -90,7 +89,7 @@ namespace ARSandbox
         private MeshRenderer meshRenderer;
         private MeshCollider meshCollider;
         private Mesh colliderMesh;
-        private FrameDescription kinectFrameDesc;
+        private DepthFrameDescriptor kinectFrameDesc;
 
         private BoxCollider LeftCollider, TopCollider, RightCollider, BottomCollider;
 
