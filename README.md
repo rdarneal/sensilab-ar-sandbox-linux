@@ -88,11 +88,57 @@ A clean exit with no `subpacket too large` / `timeout` confirms the system layer
 
 ### 6. Build the Kinect bridge
 
-> **TODO** — the native shim that lets Unity talk to libfreenect2. Filled in once Phase 2 of the port lands.
+The native shim that lets Unity talk to libfreenect2 lives at `native/kinect-bridge/`. The built `.so` is checked into `Assets/Plugins/Linux/x86_64/`, so most contributors never have to rebuild it. Only run this step if you've modified `native/kinect-bridge/src/kinect_bridge.cpp` or the C ABI in `include/kinect_bridge.h`.
+
+```bash
+./scripts/build-bridge.sh
+```
+
+The script CMake-configures `native/kinect-bridge/build/`, compiles `libkinectbridge.so` and a `smoke_test` binary, then stages the bridge **and** `libfreenect2.so.0.2` (copied out of `$HOME/freenect2/lib`) into `Assets/Plugins/Linux/x86_64/`. The bridge's RUNPATH leads with `$ORIGIN`, so the bundled libfreenect2 is what gets loaded both in the Editor and in any standalone build — the system install is only a build-time dep.
+
+Smoke test the bridge against the actual Kinect before opening Unity:
+
+```bash
+./native/kinect-bridge/build/smoke_test
+```
+
+Exit code 0 with ~30 unique-sequence frames over the run means the bridge is healthy. Anything else points at libfreenect2/USB/permissions before it touches Unity.
 
 ### 7. Open the Unity project
 
-> **TODO** — Linux Editor / build instructions filled in once Phase 5 of the port is validated.
+1. Install Unity **6000.4.7f1** via Unity Hub.
+2. Open the repo directory as a project. First import takes 5–15 minutes while Unity builds the `Library/` cache.
+3. The only playable scene is `Assets/Sandbox/Scenes/SandboxScene.unity` — it's already in Build Settings.
+4. Open `Assets/Plugins/Linux/x86_64/libkinectbridge.so` in the Inspector and verify Plugin Importer shows: Native Plugin / x86_64 / Linux / Standalone enabled, everything else disabled. Do the same for `libfreenect2.so.0.2`. The hand-written `.meta`s set this up, but Unity may rewrite them on first import.
+5. Press Play. The bridge initialises in `KinectManager.Awake()`, libfreenect2 takes ~1 s to spin up its stream, then sand changes drive the heightmap. Calibration runs from the `=` key.
+
+### 8. Build a Linux standalone
+
+1. **File → Build Profiles → Linux x86_64**. Scripting backend: **Mono** (IL2CPP requires a `link.xml` to keep the P/Invoke surface from being stripped — defer).
+2. Hit Build, point it at an output directory outside the project tree.
+3. Unity packages `libkinectbridge.so` and `libfreenect2.so.0.2` into `<Build>_Data/Plugins/x86_64/` next to each other. The bridge's `$ORIGIN` rpath finds the bundled libfreenect2 from there — no `LD_LIBRARY_PATH` needed.
+4. Launch the produced `ARSandbox-2.0.x86_64`. Same hardware requirements as Editor play.
+
+### Deploy on a different machine
+
+The Unity build bundles libfreenect2, but its transitive system deps still have to be present, and the Kinect needs udev rules:
+
+```bash
+sudo apt install -y libusb-1.0-0 libturbojpeg libglfw3 \
+    libgl1 libva2 libva-drm2 libudev1 libdrm2 libx11-6 \
+    ocl-icd-libopencl1
+# Plus an OpenCL ICD: intel-opencl-icd, mesa-opencl-icd,
+# or the NVIDIA proprietary driver (registers its own ICD).
+```
+
+```bash
+sudo cp 90-kinect2.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+(Grab `90-kinect2.rules` from the libfreenect2 source tree on the dev box — `~/libfreenect2/platform/linux/udev/90-kinect2.rules` — and ship it alongside the build.)
+
+If the target is an AMD Ryzen box, you'll likely need `iommu=pt` on the kernel cmdline too (see [USB controller note](#4-usb-controller-note)).
 
 ## License
 GNU General Public License v3.0 or later
