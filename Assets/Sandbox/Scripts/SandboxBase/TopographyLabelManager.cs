@@ -337,7 +337,8 @@ namespace ARSandbox
             CurrentMinElevationLevel = 0;
             if (possibleLabelPositions != null)
             {
-                for (int i = 0; i < MaxElevationLevel; i++)
+                int maxLevel = Mathf.Min(MaxElevationLevel, possibleLabelPositions.Length);
+                for (int i = 0; i < maxLevel; i++)
                 {
                     if (possibleLabelPositions[i].Count > 0)
                     {

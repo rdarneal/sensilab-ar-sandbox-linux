@@ -22,18 +22,15 @@
 using UnityEngine;
 using System.Collections;
 using System.IO;
-#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
-using Windows.Kinect;
-#endif
 
 namespace ARSandbox
 {
     public class KinectManager : MonoBehaviour
     {
         // Kinect v2 depth stream is a fixed 512x424 per hardware spec.
-        // Used as the descriptor when no sensor is queried (Linux saved-data fallback).
         private const int KINECT_V2_DEPTH_WIDTH = 512;
         private const int KINECT_V2_DEPTH_HEIGHT = 424;
+        private const int KINECT_V2_DEPTH_PIXELS = KINECT_V2_DEPTH_WIDTH * KINECT_V2_DEPTH_HEIGHT;
 
         public bool UseSavedData;
         public TextAsset SavedData;
@@ -42,93 +39,155 @@ namespace ARSandbox
         public static event OnDataStarted_Delegate OnDataStarted;
 
         private DepthFrameDescriptor kinectFrameDesc;
-#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
-        private KinectSensor kinectSensor;
-        private DepthFrameReader depthFrameReader;
-#endif
         private ushort[] depthData;
         private bool dataReady = false;
         private bool newData = false;
 
+        // Bridge lifecycle state. kb_init / kb_open are idempotent on the native
+        // side (re-open returns ALREADY_OPEN which we treat as success), so we
+        // rely on that to survive Editor domain reloads rather than wiring
+        // AssemblyReloadEvents.
+        private bool bridgeInitialised = false;
+        private bool bridgeOpened = false;
+        private bool bridgeStarted = false;
+        private ulong lastSequence = 0;
+
         void Start()
         {
-#if UNITY_STANDALONE_LINUX || UNITY_EDITOR_LINUX
-            // Linux: Microsoft Kinect SDK is unavailable; libfreenect2 integration
-            // is a later port phase. Force saved-data playback so the simulations
-            // can still run end-to-end against the recorded depth frame.
-            UseSavedData = true;
             kinectFrameDesc = new DepthFrameDescriptor(KINECT_V2_DEPTH_WIDTH, KINECT_V2_DEPTH_HEIGHT);
-            LoadDepthData();
-            StartCoroutine(Emulate30Hz());
-#else
-            if (GetFrameDescriptor())
+            depthData = new ushort[KINECT_V2_DEPTH_PIXELS];
+
+            if (UseSavedData)
             {
-                if (UseSavedData)
-                {
-                    LoadDepthData();
-                    StartCoroutine(Emulate30Hz());
-                }
-                else
-                {
-                    SetUpKinectBuffer();
-                }
+                LoadDepthData();
+                StartCoroutine(Emulate30Hz());
+                return;
             }
-#endif
+
+            if (!StartBridge())
+            {
+                Debug.LogWarning("[KinectManager] Falling back to saved depth data (Depth.txt).");
+                UseSavedData = true;
+                LoadDepthData();
+                StartCoroutine(Emulate30Hz());
+                return;
+            }
+
+            RefreshDescriptorFromBridge();
         }
 
         void Update()
         {
-#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
-            if (!UseSavedData)
+            if (UseSavedData || !bridgeStarted)
+                return;
+
+            ulong seq;
+            KbStatus status = KinectBridge.KbTryGetDepthFrame(depthData, out seq);
+
+            if (status == KbStatus.Ok)
             {
-                if (depthFrameReader != null)
+                if (seq != lastSequence)
                 {
-                    DepthFrame frame = depthFrameReader.AcquireLatestFrame();
-                    if (frame != null)
+                    lastSequence = seq;
+                    newData = true;
+                    if (!dataReady)
                     {
-                        if (!dataReady)
-                        {
-                            dataReady = true;
-                            if (OnDataStarted != null) OnDataStarted();
-                        }
-                        frame.CopyFrameDataToArray(depthData);
-                        newData = true;
-                        frame.Dispose();
-                        frame = null;
+                        dataReady = true;
+                        if (OnDataStarted != null) OnDataStarted();
+                        RefreshDescriptorFromBridge();
                     }
                 }
-
-                if (Input.GetKeyUp(KeyCode.S))
-                {
-                    //SaveDepthData();
-                }
             }
-#endif
+            else if (status != KbStatus.ErrNoNewFrame)
+            {
+                Debug.LogWarning("[KinectManager] kb_try_get_depth_frame returned " + status);
+            }
+        }
+
+        void OnDisable()
+        {
+            ShutdownBridge();
         }
 
         void OnApplicationQuit()
         {
-#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
-            if (!UseSavedData)
-            {
-                if (depthFrameReader != null)
-                {
-                    depthFrameReader.Dispose();
-                    depthFrameReader = null;
-                }
-
-                if (kinectSensor != null)
-                {
-                    if (kinectSensor.IsOpen)
-                    {
-                        kinectSensor.Close();
-                    }
-
-                    kinectSensor = null;
-                }
-            }
-#endif
+            ShutdownBridge();
         }
+
+        private bool StartBridge()
+        {
+            if (!bridgeInitialised)
+            {
+                KbStatus s = KinectBridge.KbInit();
+                if (s != KbStatus.Ok)
+                {
+                    Debug.LogError("[KinectManager] kb_init failed: " + s);
+                    return false;
+                }
+                bridgeInitialised = true;
+            }
+
+            if (!bridgeOpened)
+            {
+                KbStatus s = KinectBridge.KbOpen(KbPipeline.Default, 0);
+                if (s != KbStatus.Ok && s != KbStatus.ErrAlreadyOpen)
+                {
+                    Debug.LogError("[KinectManager] kb_open failed: " + s);
+                    return false;
+                }
+                bridgeOpened = true;
+            }
+
+            if (!bridgeStarted)
+            {
+                KbStatus s = KinectBridge.KbStart();
+                if (s != KbStatus.Ok)
+                {
+                    Debug.LogError("[KinectManager] kb_start failed: " + s);
+                    return false;
+                }
+                bridgeStarted = true;
+            }
+
+            Debug.Log("[KinectManager] libkinectbridge ready (pipeline=" +
+                      (KinectBridge.KbActivePipelineName() ?? "unknown") +
+                      ", freenect2=" + (KinectBridge.KbFreenect2Version() ?? "unknown") + ")");
+            return true;
+        }
+
+        private void RefreshDescriptorFromBridge()
+        {
+            KbDepthDescriptor d;
+            KbStatus s = KinectBridge.KbGetDepthDescriptor(out d);
+            if (s != KbStatus.Ok)
+            {
+                Debug.LogWarning("[KinectManager] kb_get_depth_descriptor returned " + s + "; keeping defaults.");
+                return;
+            }
+            kinectFrameDesc = new DepthFrameDescriptor(d.Width, d.Height,
+                                                      d.MinDepthMm, d.MaxDepthMm,
+                                                      d.Fx, d.Fy, d.Cx, d.Cy);
+        }
+
+        private void ShutdownBridge()
+        {
+            if (bridgeStarted)
+            {
+                KinectBridge.KbStop();
+                bridgeStarted = false;
+            }
+            if (bridgeOpened)
+            {
+                KinectBridge.KbClose();
+                bridgeOpened = false;
+            }
+            if (bridgeInitialised)
+            {
+                KinectBridge.KbShutdown();
+                bridgeInitialised = false;
+            }
+        }
+
         private IEnumerator Emulate30Hz()
         {
             while (true)
@@ -143,14 +202,17 @@ namespace ARSandbox
                 }
             }
         }
+
         public DepthFrameDescriptor GetKinectFrameDescriptor()
         {
             return kinectFrameDesc;
         }
+
         public Point GetKinectFrameSize()
         {
             return new Point(kinectFrameDesc.Width, kinectFrameDesc.Height);
         }
+
         public ushort[] GetCurrentData()
         {
             newData = false;
@@ -170,38 +232,6 @@ namespace ARSandbox
             return newData;
         }
 
-#if !UNITY_STANDALONE_LINUX && !UNITY_EDITOR_LINUX
-        private bool GetFrameDescriptor()
-        {
-            kinectSensor = KinectSensor.GetDefault();
-            if (kinectSensor != null)
-            {
-                FrameDescription fd = kinectSensor.DepthFrameSource.FrameDescription;
-                kinectFrameDesc = new DepthFrameDescriptor(fd.Width, fd.Height);
-                return true;
-            }
-            else
-            {
-                print("Error: KinectSensor not found. Make sure Kinect has been installed correctly");
-                return false;
-            }
-        }
-
-        private void SetUpKinectBuffer()
-        {
-            if (kinectSensor != null)
-            {
-                if (!kinectSensor.IsOpen)
-                {
-                    kinectSensor.Open();
-                }
-
-                depthFrameReader = kinectSensor.DepthFrameSource.OpenReader();
-                depthData = new ushort[kinectSensor.DepthFrameSource.FrameDescription.LengthInPixels];
-            }
-        }
-#endif
-
         private void LoadDepthData()
         {
             using (Stream s = new MemoryStream(SavedData.bytes))
@@ -213,20 +243,6 @@ namespace ARSandbox
                     for (int i = 0; i < length; i++)
                     {
                         depthData[i] = br.ReadUInt16();
-                    }
-                }
-            }
-        }
-        private void SaveDepthData()
-        {
-            using (FileStream fs = new FileStream(Application.dataPath + "/Depth.txt", FileMode.OpenOrCreate, FileAccess.Write))
-            {
-                using (BinaryWriter bw = new BinaryWriter(fs))
-                {
-                    bw.Write(depthData.Length);
-                    foreach (ushort value in depthData)
-                    {
-                        bw.Write(value);
                     }
                 }
             }
