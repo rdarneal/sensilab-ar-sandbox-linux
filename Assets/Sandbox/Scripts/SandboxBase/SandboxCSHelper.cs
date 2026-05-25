@@ -30,6 +30,7 @@ namespace ARSandbox
         public const string CS_DOWNSAMPLE = "CS_DownsampleRT";
         public const string CS_GAUSSIAN_HORI = "CS_GaussianBlurHorizontal";
         public const string CS_GAUSSIAN_VERT = "CS_GaussianBlurVertical";
+        public const string CS_TEMPORAL_LERP = "CS_TemporalLerp";
         public const string CS_GENERATE_MESH = "CS_GeneratePlaneMesh";
         public const string CS_GENERATE_MESH_NO_TRIS = "CS_GeneratePlaneMeshNoTris";
         public const string CS_CONTOUR_SOBEL_FILTER = "CS_ContourSobelFilter";
@@ -59,6 +60,24 @@ namespace ARSandbox
             sandboxCS.SetTexture(kernelHandle, "BlurredDataRT", blurredDataRT);
             sandboxCS.SetFloats("BlurTextureSize", new float[2] { texSizeX, texSizeY });
 
+            sandboxCS.Dispatch(kernelHandle, threadsToRun.x, threadsToRun.y, 1);
+        }
+
+        // Temporal EMA: writes lerp(currRT, prevRT, smoothingWeight) into outRT.
+        // currRT/prevRT bind to SRV slots; outRT binds to a UAV slot. No same-slot
+        // cross-frame read-modify-write — see memory/project_vulkan_uav_counter_hazard.md.
+        public static void Run_TemporalLerp(ComputeShader sandboxCS, Texture currRT, Texture prevRT,
+                                            Texture outRT, float smoothingWeight)
+        {
+            int kernelHandle = sandboxCS.FindKernel(CS_TEMPORAL_LERP);
+            sandboxCS.SetTexture(kernelHandle, "TemporalCurrRT", currRT);
+            sandboxCS.SetTexture(kernelHandle, "TemporalPrevRT", prevRT);
+            sandboxCS.SetTexture(kernelHandle, "TemporalOutRT", outRT);
+            sandboxCS.SetFloat("TemporalSmoothingWeight", smoothingWeight);
+
+            int texSizeX = outRT.width;
+            int texSizeY = outRT.height;
+            Point threadsToRun = ComputeShaderHelpers.CalculateThreadsToRun(new Point(texSizeX, texSizeY), CS_SQUARE_LAYOUT_16);
             sandboxCS.Dispatch(kernelHandle, threadsToRun.x, threadsToRun.y, 1);
         }
 

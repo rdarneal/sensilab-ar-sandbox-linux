@@ -54,6 +54,13 @@ namespace ARSandbox
         public SandboxDataCamera SandboxDataCamera;
         public TopographyLabelManager TopographyTextHandler;
 
+        // Temporal EMA weight on the processed branch. 0 = no smoothing (snappy, jagged);
+        // higher = sticks to previous frame more, hides per-pixel noise. Clamped < 1 so it
+        // can never freeze. Ping-pong source/destination — not the wedged CS_LowPassData
+        // pattern, see memory/project_vulkan_uav_counter_hazard.md.
+        [Range(0f, 0.95f)]
+        public float TemporalSmoothing = 0.75f;
+
         public Vector2 MESH_XY_STRIDE_DS1 { get; private set; }
         public Vector2 MESH_XY_STRIDE_DS2 { get; private set; }
         public Vector2 MESH_XY_STRIDE_DS3 { get; private set; }
@@ -96,6 +103,8 @@ namespace ARSandbox
         private RenderTexture processedDepthsRT, processedDepthsRT_DS,
                                   processedDepthsRT_DS2, processedDepthsRT_DS3;
         private RenderTexture blurredDataTempRT, blurredDataDSTempRT, blurredDataDS2TempRT;
+        private RenderTexture blurredCurrRT, smoothPrevRT;
+        private bool temporalPrimed;
         private ComputeBuffer proceduralVertices_Buffer, proceduralUV_Buffer;
         private ComputeBuffer proceduralVertices_DS_Buffer, proceduralUV_DS_Buffer;
         private ComputeBuffer proceduralVertices_DS2_Buffer, proceduralUV_DS2_Buffer;
@@ -484,6 +493,10 @@ namespace ARSandbox
             blurredDataDSTempRT = InitialiseDepthRT(calibrationDescriptor.DataSize_DS);
             blurredDataDS2TempRT = InitialiseDepthRT(calibrationDescriptor.DataSize_DS2);
 
+            blurredCurrRT = InitialiseDepthRT(calibrationDescriptor.DataSize);
+            smoothPrevRT = InitialiseDepthRT(calibrationDescriptor.DataSize);
+            temporalPrimed = false;
+
             processedDepthsRT = InitialiseDepthRT(calibrationDescriptor.DataSize);
             processedDepthsRT_DS = InitialiseDepthRT(calibrationDescriptor.DataSize_DS);
             processedDepthsRT_DS2 = InitialiseDepthRT(calibrationDescriptor.DataSize_DS2);
@@ -540,6 +553,9 @@ namespace ARSandbox
                 blurredDataTempRT.Release();
                 blurredDataDSTempRT.Release();
                 blurredDataDS2TempRT.Release();
+
+                blurredCurrRT.Release();
+                smoothPrevRT.Release();
 
                 rawDepthsRT_DS.Release();
                 rawDepthsRT_DS2.Release();
@@ -655,15 +671,29 @@ namespace ARSandbox
                                                         meshStart, MESH_XY_STRIDE_DS3, MESH_Z_SCALE);
             }
             else {
-                // Processed branch: stateless spatial blur of the current raw depth frame.
-                // No temporal low-pass (removed on the Linux port — see
-                // memory/project_vulkan_uav_counter_hazard.md). libfreenect2's clkde
-                // pipeline already smooths depth per-frame at the bridge; the Gaussian
-                // blur below adds spatial smoothing. Sand changes appear on the next
-                // Kinect frame after they occur.
+                // Processed branch: spatial blur of the current raw frame, followed by an
+                // EMA temporal smooth (lerp current ↔ previous). The original Windows
+                // CS_LowPassData kernel did this with a cross-frame RMW counter that wedged
+                // on Linux + Vulkan; CS_TemporalLerp uses two SRV reads and one UAV write
+                // into a sibling RT, then snapshots back into smoothPrevRT for the next
+                // frame — no same-slot UAV→UAV barrier needed. See
+                // memory/project_vulkan_uav_counter_hazard.md.
                 Texture initialData = forcedTextureEnabled ? forcedTexture : rawDepthsTex;
 
-                SandboxCSHelper.Run_BlurRT(SandboxProcessingShader, initialData, blurredDataTempRT, processedDepthsRT);
+                SandboxCSHelper.Run_BlurRT(SandboxProcessingShader, initialData, blurredDataTempRT, blurredCurrRT);
+
+                if (!temporalPrimed)
+                {
+                    // First frame after init: seed smoothPrevRT with the current blurred
+                    // frame so the EMA doesn't drag the mesh through a one-shot 'flat'
+                    // warm-up while it converges.
+                    Graphics.CopyTexture(blurredCurrRT, smoothPrevRT);
+                    temporalPrimed = true;
+                }
+
+                SandboxCSHelper.Run_TemporalLerp(SandboxProcessingShader, blurredCurrRT, smoothPrevRT,
+                                                 processedDepthsRT, TemporalSmoothing);
+                Graphics.CopyTexture(processedDepthsRT, smoothPrevRT);
 
                 SandboxCSHelper.Run_DownsampleRT(SandboxProcessingShader, processedDepthsRT, processedDepthsRT_DS);
                 SandboxCSHelper.Run_DownsampleRT(SandboxProcessingShader, processedDepthsRT_DS, processedDepthsRT_DS2);

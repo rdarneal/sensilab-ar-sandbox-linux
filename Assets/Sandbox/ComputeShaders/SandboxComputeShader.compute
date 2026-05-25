@@ -22,6 +22,7 @@
 #pragma kernel CS_DownsampleRT
 #pragma kernel CS_GaussianBlurHorizontal
 #pragma kernel CS_GaussianBlurVertical
+#pragma kernel CS_TemporalLerp
 #pragma kernel CS_GeneratePlaneMesh
 #pragma kernel CS_GeneratePlaneMeshNoTris
 #pragma kernel CS_ContourSobelFilter
@@ -149,6 +150,23 @@ void CS_GaussianBlurVertical (uint3 id : SV_DispatchThreadID)
 
 	BlurredDataRT[id.xy] = total;
 }
+
+// Temporal EMA: out = lerp(curr, prev, weight). Reads two SRVs and writes one UAV,
+// so it doesn't depend on cross-frame UAV→UAV barriers — replacement for the original
+// CS_LowPassData / LowPassCounter mechanism. See memory/project_vulkan_uav_counter_hazard.md.
+Texture2D<float> TemporalCurrRT;
+Texture2D<float> TemporalPrevRT;
+RWTexture2D<float> TemporalOutRT;
+float TemporalSmoothingWeight;
+
+[numthreads(16,16,1)]
+void CS_TemporalLerp(uint3 id : SV_DispatchThreadID)
+{
+	float curr = TemporalCurrRT[id.xy];
+	float prev = TemporalPrevRT[id.xy];
+	TemporalOutRT[id.xy] = lerp(curr, prev, TemporalSmoothingWeight);
+}
+
 // Generate Mesh compute shader
 // Inputs
 Texture2D<float> DataToMeshRT;
