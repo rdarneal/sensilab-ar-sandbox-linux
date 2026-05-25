@@ -48,9 +48,6 @@ namespace ARSandbox.TopographyBuilder
 
         private byte[] rawDepthData;
         private Texture2D rawDepthsTex;
-        private RenderTexture internalLowPassDataRT;
-        private RenderTexture lowPassCounterRT;
-        private RenderTexture lowPassDataRT;
         private RenderTexture blurredDataTempRT;
         private RenderTexture processedDepthsRT;
 
@@ -59,7 +56,6 @@ namespace ARSandbox.TopographyBuilder
         private bool ValidTopographyProps, TopographyInitialised;
 
         private List<string> savedTopographyNames;
-        private bool setInitialData;
         public List<LoadedTopography> loadedTopographies { get; private set; }
 
         private void OnEnable()
@@ -131,7 +127,6 @@ namespace ARSandbox.TopographyBuilder
                     Sandbox.SetForcedHeightEnabled(true);
                     Sandbox.SetShaderFloat("_HeightTextureSizeX", SelectedTopography.DataSize.x);
                     Sandbox.SetShaderFloat("_HeightTextureSizeY", SelectedTopography.DataSize.y);
-                    setInitialData = true;
 
                     TopographyInitialised = true;
                 } else
@@ -154,10 +149,6 @@ namespace ARSandbox.TopographyBuilder
             rawDepthData = new byte[totalValues * 2];
             rawDepthsTex = new Texture2D(width, height, TextureFormat.R16, false);
             rawDepthsTex.filterMode = FilterMode.Bilinear;
-
-            lowPassCounterRT = InitialiseDepthRT(sandboxDescriptor.DataSize);
-            internalLowPassDataRT = InitialiseDepthRT(sandboxDescriptor.DataSize);
-            lowPassDataRT = InitialiseDepthRT(sandboxDescriptor.DataSize);
 
             blurredDataTempRT = InitialiseDepthRT(sandboxDescriptor.DataSize);
             processedDepthsRT = InitialiseDepthRT(sandboxDescriptor.DataSize);
@@ -210,24 +201,15 @@ namespace ARSandbox.TopographyBuilder
         }
         private void GenerateProcessedTexture()
         {
-            if (setInitialData)
-            {
-                SandboxCSHelper.Run_SetInitialLowPassData(SandboxProcessingShader, sandboxDescriptor.RawDepthsTex, sandboxDescriptor.DataSize, internalLowPassDataRT, lowPassCounterRT,
-                                                              lowPassDataRT, SelectedTopography.MinDepth, SelectedTopography.MaxDepth);
-                setInitialData = false;
-            }
-            SandboxCSHelper.Run_ComputeLowPassRT(SandboxProcessingShader, sandboxDescriptor.RawDepthsTex, sandboxDescriptor.DataSize, internalLowPassDataRT, lowPassCounterRT, lowPassDataRT,
-                                                     Sandbox.ALPHA_1, Sandbox.ALPHA_2, SelectedTopography.MinDepth, SelectedTopography.MaxDepth,
-                                                     Sandbox.NoiseTolerance, Sandbox.LowPassHoldTime);
-            SandboxCSHelper.Run_BlurRT(SandboxProcessingShader, lowPassDataRT, blurredDataTempRT, processedDepthsRT);
+            // Stateless: blur the live sandbox depth into processedDepthsRT. The original
+            // codebase ran a temporal low-pass here too (same pattern as Sandbox.cs); removed
+            // for the same Vulkan UAV barrier hazard. See project_vulkan_uav_counter_hazard.md.
+            SandboxCSHelper.Run_BlurRT(SandboxProcessingShader, sandboxDescriptor.RawDepthsTex, blurredDataTempRT, processedDepthsRT);
         }
         private void DisposeRenderTextures()
         {
             if (ValidTopographyProps && TopographyInitialised)
             {
-                internalLowPassDataRT.Release();
-                lowPassCounterRT.Release();
-                lowPassDataRT.Release();
                 blurredDataTempRT.Release();
                 processedDepthsRT.Release();
             }

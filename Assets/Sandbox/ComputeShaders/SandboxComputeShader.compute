@@ -19,8 +19,6 @@
 //  along with sensilab-ar-sandbox.  If not, see <https://www.gnu.org/licenses/>.
 //
 
-#pragma kernel CS_LowPassData
-#pragma kernel CS_SetInitialLowPassData
 #pragma kernel CS_DownsampleRT
 #pragma kernel CS_GaussianBlurHorizontal
 #pragma kernel CS_GaussianBlurVertical
@@ -34,84 +32,14 @@
 #define POW_2_16 65535.0
 #define pi 3.141592653
 
-// Data low pass compute shader
-// Inputs (sampler for downsample too)
+// Shared raw-data sampler binding used by CS_DownsampleRT. The original codebase also
+// had a temporal low-pass stage (CS_LowPassData + CS_SetInitialLowPassData) that lived
+// here and consumed RawDataRT; that stage was removed on the Linux port because its
+// cross-frame RWTexture2D read-modify-write pattern hit a Vulkan barrier hazard on
+// Unity 6 + NVIDIA driver 550.x. libfreenect2's clkde pipeline already smooths depth
+// at source, so the temporal stage was redundant. See memory/project_vulkan_uav_counter_hazard.md.
 Texture2D RawDataRT;
-// This sampler actually works!
 SamplerState linearClampSampler;
-
-RWTexture2D<float> InternalLowPassDataRT;
-RWTexture2D<float> LowPassCounterRT;
-
-float4 LowPassParams0 = float4(512, 424, 0.3, 0.05);
-float4 LowPassParams1 = float4(1000.0, 1200.0, 10.0, 20.0);
-
-#define TEX_SIZE_LP_X		(LowPassParams0.x) 
-#define TEX_SIZE_LP_Y		(LowPassParams0.y)
-#define ALPHA_1			(LowPassParams0.z)
-#define ALPHA_2			(LowPassParams0.w)
-
-#define MIN_DEPTH	    (LowPassParams1.x)
-#define MAX_DEPTH		(LowPassParams1.y)
-#define NOISE_TOLERANCE (LowPassParams1.z)
-#define HOLD_TIME		(LowPassParams1.w)
-
-// Outputs
-RWTexture2D<float> LowPassDataRT;
-
-[numthreads(16,16,1)]
-void CS_LowPassData (uint3 id : SV_DispatchThreadID)
-{
-	float sizeX = float(TEX_SIZE_LP_X);
-	float sizeY = float(TEX_SIZE_LP_Y);
-
-	float2 texCoord = float2(id.x / sizeX, id.y / sizeY);
-	float depthVal = (float)RawDataRT.SampleLevel(linearClampSampler, texCoord, 0);
-
-	float depthRange = MAX_DEPTH - MIN_DEPTH;
-	float adjustedMinDepth = MIN_DEPTH - depthRange * 0.2;
-	float adjustedMaxDepth = MAX_DEPTH + depthRange * 0.2;
-	float scaledDepthVal = depthVal * POW_2_16;
-
-	float internalDepthValue = InternalLowPassDataRT[id.xy];
-	if (scaledDepthVal < adjustedMinDepth  || scaledDepthVal > adjustedMaxDepth) depthVal = internalDepthValue;
-
-	if (depthVal > internalDepthValue) {
-		internalDepthValue = ALPHA_1*depthVal  + (1-ALPHA_1)*internalDepthValue;
-	} else {
-		internalDepthValue = ALPHA_2*depthVal  + (1-ALPHA_2)*internalDepthValue;
-	}
-	InternalLowPassDataRT[id.xy] = internalDepthValue;
-
-	float visibleDepthValue = LowPassDataRT[id.xy];
-
-	if (abs(visibleDepthValue - internalDepthValue) > NOISE_TOLERANCE / POW_2_16) {
-		LowPassCounterRT[id.xy] += 1;
-		if (LowPassCounterRT[id.xy] > HOLD_TIME + 1) {
-			LowPassDataRT[id.xy] = clamp(internalDepthValue, MIN_DEPTH / POW_2_16, MAX_DEPTH / POW_2_16);
-		}
-	} else {
-		LowPassCounterRT[id.xy] = 0;
-	}
-}
-
-[numthreads(16,16,1)]
-void CS_SetInitialLowPassData (uint3 id : SV_DispatchThreadID)
-{
-	float sizeX = float(TEX_SIZE_LP_X);
-	float sizeY = float(TEX_SIZE_LP_Y);
-
-	float2 texCoord = float2(id.x / sizeX, id.y / sizeY);
-
-	float depthVal = (float)RawDataRT.SampleLevel(linearClampSampler, texCoord, 0);
-	float depthRange = MAX_DEPTH - MIN_DEPTH;
-
-	depthVal = clamp(depthVal, (MIN_DEPTH) / POW_2_16, (MAX_DEPTH) / POW_2_16);
-
-	InternalLowPassDataRT[id.xy] = depthVal;
-	LowPassDataRT[id.xy] = depthVal;
-	LowPassCounterRT[id.xy] = 0;
-}
 
 // Downsample compute shader
 
@@ -509,3 +437,4 @@ void CS_ContourFindPaths(uint3 id : SV_DispatchThreadID) {
 		ContourPathsBuffer[bufferIndex] = contourPathPixel;
 	}
 }
+

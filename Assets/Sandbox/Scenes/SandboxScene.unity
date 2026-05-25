@@ -48824,8 +48824,6 @@ MonoBehaviour:
   ColourScaleTexture: {fileID: 2800000, guid: b501964027f6ad841887de1a370f6e99, type: 3}
   SandboxDataCamera: {fileID: 558044088}
   TopographyTextHandler: {fileID: 1802749924}
-  NoiseTolerance: 7.5
-  LowPassHoldTime: 20
 --- !u!1 &1468535208
 GameObject:
   m_ObjectHideFlags: 0

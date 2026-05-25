@@ -27,8 +27,6 @@ namespace ARSandbox
 {
     public static class SandboxCSHelper
     {
-        public const string CS_LOW_PASS = "CS_LowPassData";
-        public const string CS_INITIAL_LOW_PASS = "CS_SetInitialLowPassData";
         public const string CS_DOWNSAMPLE = "CS_DownsampleRT";
         public const string CS_GAUSSIAN_HORI = "CS_GaussianBlurHorizontal";
         public const string CS_GAUSSIAN_VERT = "CS_GaussianBlurVertical";
@@ -40,51 +38,6 @@ namespace ARSandbox
         public const string CS_EXTRACT_DEPTH_DATA = "CS_ExtractDepthData";
 
         public static readonly Point CS_SQUARE_LAYOUT_16 = new Point(16, 16);
-
-        public static void Run_SetInitialLowPassData(ComputeShader sandboxCS, Texture rawDataRT, Point sandboxSize, Texture internalLowPassDataRT,
-                                          Texture lowPassCounterRT, Texture lowPassDataRT, float minDepth, float maxDepth)
-        {
-            int kernelHandle = sandboxCS.FindKernel(CS_INITIAL_LOW_PASS);
-            sandboxCS.SetTexture(kernelHandle, "RawDataRT", rawDataRT);
-            sandboxCS.SetTexture(kernelHandle, "LowPassDataRT", lowPassDataRT);
-            sandboxCS.SetTexture(kernelHandle, "InternalLowPassDataRT", internalLowPassDataRT);
-            sandboxCS.SetTexture(kernelHandle, "LowPassCounterRT", lowPassCounterRT);
-
-            int texSizeX = sandboxSize.x;
-            int texSizeY = sandboxSize.y;
-
-            float[] lowPassParams0 = new float[4] { texSizeX, texSizeY, 0, 0 };
-            sandboxCS.SetFloats("LowPassParams0", lowPassParams0);
-
-            float[] lowPassParams1 = new float[4] { minDepth, maxDepth, 0, 0 };
-            sandboxCS.SetFloats("LowPassParams1", lowPassParams1);
-
-            Point threadsToRun = ComputeShaderHelpers.CalculateThreadsToRun(new Point(texSizeX, texSizeY), CS_SQUARE_LAYOUT_16);
-            sandboxCS.Dispatch(kernelHandle, threadsToRun.x, threadsToRun.y, 1);
-        }
-
-        public static void Run_ComputeLowPassRT(ComputeShader sandboxCS, Texture rawDataRT, Point sandboxSize, Texture internalLowPassDataRT,
-                                          Texture lowPassCounterRT, Texture lowPassDataRT, float alpha1, float alpha2,
-                                          float minDepth, float maxDepth, float noiseTolerance, float lowPassHoldTime)
-        {
-            int kernelHandle = sandboxCS.FindKernel(CS_LOW_PASS);
-            sandboxCS.SetTexture(kernelHandle, "RawDataRT", rawDataRT);
-            sandboxCS.SetTexture(kernelHandle, "InternalLowPassDataRT", internalLowPassDataRT);
-            sandboxCS.SetTexture(kernelHandle, "LowPassCounterRT", lowPassCounterRT);
-            sandboxCS.SetTexture(kernelHandle, "LowPassDataRT", lowPassDataRT);
-
-            int texSizeX = sandboxSize.x;
-            int texSizeY = sandboxSize.y;
-
-            float[] lowPassParams0 = new float[4] { texSizeX, texSizeY, alpha1, alpha2 };
-            sandboxCS.SetFloats("LowPassParams0", lowPassParams0);
-
-            float[] lowPassParams1 = new float[4] { minDepth, maxDepth, noiseTolerance, lowPassHoldTime };
-            sandboxCS.SetFloats("LowPassParams1", lowPassParams1);
-
-            Point threadsToRun = ComputeShaderHelpers.CalculateThreadsToRun(new Point(texSizeX, texSizeY), CS_SQUARE_LAYOUT_16);
-            sandboxCS.Dispatch(kernelHandle, threadsToRun.x, threadsToRun.y, 1);
-        }
 
         public static void Run_BlurRT(ComputeShader sandboxCS, Texture unblurredDataRT, Texture tempRT, Texture blurredDataRT)
         {

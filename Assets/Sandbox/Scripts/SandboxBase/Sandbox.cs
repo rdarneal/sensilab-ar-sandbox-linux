@@ -43,8 +43,6 @@ namespace ARSandbox
     {
         public const float MESH_Z_SCALE = 1 / 8000.0f * 2000.0f;
         public const int COLL_MESH_DELAY = 15; // Amount of new frames needed to update the collider mesh.
-        public const float ALPHA_1 = 0.3f;
-        public const float ALPHA_2 = 0.05f;
         public readonly static Vector2 MESH_XY_STRIDE = new Vector2(0.5f, 0.5f);
         public readonly static Vector3 MESH_POSITION = new Vector3(0, 0, 0);
 
@@ -59,12 +57,6 @@ namespace ARSandbox
         public Vector2 MESH_XY_STRIDE_DS1 { get; private set; }
         public Vector2 MESH_XY_STRIDE_DS2 { get; private set; }
         public Vector2 MESH_XY_STRIDE_DS3 { get; private set; }
-
-        [Range(0, 50)]
-        public float NoiseTolerance = 5.0f;
-
-        [Range(0, 60)]
-        public float LowPassHoldTime = 30.0f;
 
         public float MajorContourSpacing { get; private set; }
         public int MinorContours { get; private set; }
@@ -98,13 +90,11 @@ namespace ARSandbox
         private Material NormalMaterial, DepthDataMaterial, ContourDataMaterial, BlackAndWhiteMaterial;
 
         private Vector3 meshStart = Vector3.zero;
-        private bool setInitialLowPassData = true;
 
         private Texture2D rawDepthsTex;
         private RenderTexture rawDepthsRT_DS, rawDepthsRT_DS2, rawDepthsRT_DS3;
-        private RenderTexture processedDepthsRT, processedDepthsRT_DS, 
+        private RenderTexture processedDepthsRT, processedDepthsRT_DS,
                                   processedDepthsRT_DS2, processedDepthsRT_DS3;
-        private RenderTexture internalLowPassDataRT, lowPassCounterRT, lowPassDataRT;
         private RenderTexture blurredDataTempRT, blurredDataDSTempRT, blurredDataDS2TempRT;
         private ComputeBuffer proceduralVertices_Buffer, proceduralUV_Buffer;
         private ComputeBuffer proceduralVertices_DS_Buffer, proceduralUV_DS_Buffer;
@@ -285,11 +275,7 @@ namespace ARSandbox
                 NormalMaterial.shader = DefaultSandboxShader;
                 UsingCustomShader = false;
                 SetShaderProperties(NormalMaterial);
-                if (forcedTextureEnabled)
-                {
-                    setInitialLowPassData = true;
-                    forcedTextureEnabled = false;
-                }
+                forcedTextureEnabled = false;
             }
         }
         private void SetShaderProperties(Material material)
@@ -363,7 +349,6 @@ namespace ARSandbox
             } else
             {
                 SandboxResolution = SandboxResolution.Original;
-                setInitialLowPassData = true;
             }
             SandboxDataCamera.UpdateSandboxResolution(SandboxResolution);
         }
@@ -458,9 +443,8 @@ namespace ARSandbox
             NormalMaterial.SetFloat("_MaxDepth", calibrationDescriptor.MaxDepth);
             NormalMaterial.SetFloat("_MinDepth", calibrationDescriptor.MinDepth);
 
-            setInitialLowPassData = true;
             SandboxResolution = SandboxResolution.Downsampled_1x;
-            
+
             InitialiseBuffers();
             
             // Set up the sandbox descriptor.
@@ -495,10 +479,6 @@ namespace ARSandbox
             rawDepthData = new byte[totalValues * 2];
             rawDepthsTex = new Texture2D(width, height, TextureFormat.R16, false);
             rawDepthsTex.filterMode = FilterMode.Bilinear;
-
-            lowPassCounterRT = InitialiseDepthRT(calibrationDescriptor.DataSize);
-            internalLowPassDataRT = InitialiseDepthRT(calibrationDescriptor.DataSize);
-            lowPassDataRT = InitialiseDepthRT(calibrationDescriptor.DataSize);
 
             blurredDataTempRT = InitialiseDepthRT(calibrationDescriptor.DataSize);
             blurredDataDSTempRT = InitialiseDepthRT(calibrationDescriptor.DataSize_DS);
@@ -557,10 +537,6 @@ namespace ARSandbox
         {
             if (initialCalibrationComplete)
             {
-                internalLowPassDataRT.Release();
-                lowPassCounterRT.Release();
-                lowPassDataRT.Release();
-
                 blurredDataTempRT.Release();
                 blurredDataDSTempRT.Release();
                 blurredDataDS2TempRT.Release();
@@ -652,7 +628,6 @@ namespace ARSandbox
         public void SetForcedHeightEnabled(bool enabled)
         {
             forcedTextureEnabled = enabled;
-            setInitialLowPassData = true;
         }
         private void LoadData()
         {
@@ -680,19 +655,15 @@ namespace ARSandbox
                                                         meshStart, MESH_XY_STRIDE_DS3, MESH_Z_SCALE);
             }
             else {
-                // Create processed and downsampled depth data
+                // Processed branch: stateless spatial blur of the current raw depth frame.
+                // No temporal low-pass (removed on the Linux port — see
+                // memory/project_vulkan_uav_counter_hazard.md). libfreenect2's clkde
+                // pipeline already smooths depth per-frame at the bridge; the Gaussian
+                // blur below adds spatial smoothing. Sand changes appear on the next
+                // Kinect frame after they occur.
                 Texture initialData = forcedTextureEnabled ? forcedTexture : rawDepthsTex;
-                if (setInitialLowPassData)
-                {
-                    setInitialLowPassData = false;
-                    SandboxCSHelper.Run_SetInitialLowPassData(SandboxProcessingShader, initialData, calibrationDescriptor.DataSize, internalLowPassDataRT, lowPassCounterRT,
-                                                              lowPassDataRT, calibrationDescriptor.MinDepth, calibrationDescriptor.MaxDepth);
-                }
-                SandboxCSHelper.Run_ComputeLowPassRT(SandboxProcessingShader, initialData, calibrationDescriptor.DataSize, internalLowPassDataRT, lowPassCounterRT, lowPassDataRT,
-                                                     ALPHA_1, ALPHA_2, calibrationDescriptor.MinDepth, calibrationDescriptor.MaxDepth,
-                                                     NoiseTolerance, LowPassHoldTime);
 
-                SandboxCSHelper.Run_BlurRT(SandboxProcessingShader, lowPassDataRT, blurredDataTempRT, processedDepthsRT);
+                SandboxCSHelper.Run_BlurRT(SandboxProcessingShader, initialData, blurredDataTempRT, processedDepthsRT);
 
                 SandboxCSHelper.Run_DownsampleRT(SandboxProcessingShader, processedDepthsRT, processedDepthsRT_DS);
                 SandboxCSHelper.Run_DownsampleRT(SandboxProcessingShader, processedDepthsRT_DS, processedDepthsRT_DS2);
