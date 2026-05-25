@@ -38,13 +38,16 @@ target_link_libraries(kinectbridge
         Threads::Threads
 )
 
-# RPATH so both the .so and the smoke test resolve libfreenect2 without
-# LD_LIBRARY_PATH on the dev box (in-repo deploy still relies on Unity's
-# own loader path / system loader configuration).
+# RPATH with $ORIGIN first so a deployed build finds libfreenect2.so.0.2
+# next to libkinectbridge.so (scripts/build-bridge.sh stages it there, and
+# Unity packages both into <Build>_Data/Plugins/x86_64/ on a Linux build).
+# FREENECT2_ROOT/lib stays as a build-time fallback so the smoke test still
+# resolves the dep when run directly from build/ where libfreenect2 isn't
+# present.
 set_target_properties(kinectbridge PROPERTIES
     OUTPUT_NAME "kinectbridge"
-    BUILD_RPATH "${FREENECT2_ROOT}/lib"
-    INSTALL_RPATH "${FREENECT2_ROOT}/lib"
+    BUILD_RPATH "\$ORIGIN:${FREENECT2_ROOT}/lib"
+    INSTALL_RPATH "\$ORIGIN:${FREENECT2_ROOT}/lib"
 )
 
 add_executable(smoke_test test/smoke_test.c)

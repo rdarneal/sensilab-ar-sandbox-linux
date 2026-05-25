@@ -25,3 +25,18 @@ fi
 cp "${SRC_SO}" "${PLUGIN_DIR}/${SO_NAME}"
 SIZE_BYTES=$(stat -c%s "${PLUGIN_DIR}/${SO_NAME}")
 echo "build-bridge: staged ${PLUGIN_DIR}/${SO_NAME} (${SIZE_BYTES} bytes)"
+
+# Stage libfreenect2 next to the bridge so the $ORIGIN entry in libkinectbridge's
+# RUNPATH finds it in a deployed Linux build. We copy the underlying file under
+# the SONAME ("libfreenect2.so.0.2") — that matches the bridge's DT_NEEDED, so
+# no symlink is needed (and Unity prefers a flat file for its plugin importer).
+FREENECT2_SONAME="libfreenect2.so.0.2"
+FREENECT2_SRC="${HOME}/freenect2/lib/libfreenect2.so.0.2.0"
+if [[ ! -f "${FREENECT2_SRC}" ]]; then
+    echo "build-bridge: expected ${FREENECT2_SRC} but it doesn't exist" >&2
+    echo "build-bridge: install libfreenect2 to \$HOME/freenect2 first" >&2
+    exit 1
+fi
+cp "${FREENECT2_SRC}" "${PLUGIN_DIR}/${FREENECT2_SONAME}"
+FN2_SIZE_BYTES=$(stat -c%s "${PLUGIN_DIR}/${FREENECT2_SONAME}")
+echo "build-bridge: staged ${PLUGIN_DIR}/${FREENECT2_SONAME} (${FN2_SIZE_BYTES} bytes)"
