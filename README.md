@@ -30,7 +30,9 @@ The port is in progress — see [`CLAUDE.md`](CLAUDE.md) for the architecture ma
 
 ## Setup (Linux)
 
-> Setup is currently a manual sequence. A `scripts/setup-ubuntu.sh` will land once the steps stabilise.
+> **One-shot:** `./scripts/setup-ubuntu.sh` performs steps 1–4 below (apt deps, libfreenect2 source + Ubuntu 24 patch + build, udev rule install, AMD `iommu=pt` check). Idempotent and safe to re-run. Step 5 (Protonect smoke test) is manual because it needs the Kinect physically plugged in.
+>
+> The per-step breakdown below is what the script automates — read through if you want to know exactly what it touches before running it.
 
 ### 1. System dependencies
 
