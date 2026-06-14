@@ -105,6 +105,8 @@ namespace ARSandbox.UI
         // --- canvas walk ----------------------------------------------------------
         private void ThemeCanvas()
         {
+            int imgCount = 0, textCount = 0;
+
             // include inactive: most simulation menus start disabled.
             var images = GetComponentsInChildren<Image>(true);
             foreach (var img in images)
@@ -112,17 +114,27 @@ namespace ARSandbox.UI
                 if (IsOwnedByTheme(img.transform)) continue;
                 if (!IsThemableBackground(img)) continue;
 
-                var selectable = img.GetComponent<Selectable>();
-                if (selectable != null)
+                // Per-element guard: one bad element must never abort the whole pass
+                // (that would leave later text un-recoloured and invisible on dark panels).
+                try
                 {
-                    StyleButton(img, selectable);
+                    var selectable = img.GetComponent<Selectable>();
+                    if (selectable != null)
+                    {
+                        StyleButton(img, selectable);
+                    }
+                    else
+                    {
+                        // Recolor every themable background regardless of size — thin title
+                        // bars (e.g. TitleBg, 20px tall) and small panels kept their YAML
+                        // colour under the old size gate. The size now only gates the border.
+                        StylePanel(img);
+                    }
+                    imgCount++;
                 }
-                else
+                catch (System.Exception e)
                 {
-                    // Recolor every themable background regardless of size — thin title
-                    // bars (e.g. TitleBg, 20px tall) and small panels kept their YAML
-                    // colour under the old size gate. The size now only gates the border.
-                    StylePanel(img);
+                    Debug.LogError($"[SandboxUIThemer] failed to style image '{Path(img.transform)}': {e.Message}");
                 }
             }
 
@@ -130,8 +142,24 @@ namespace ARSandbox.UI
             foreach (var text in texts)
             {
                 if (IsOwnedByTheme(text.transform)) continue;
-                StyleText(text);
+                try
+                {
+                    StyleText(text);
+                    textCount++;
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"[SandboxUIThemer] failed to style text '{Path(text.transform)}': {e.Message}");
+                }
             }
+
+            Debug.Log($"[SandboxUIThemer] styled {imgCount} images, {textCount} texts.");
+        }
+
+        // Builds a "Parent/Child" hierarchy path for diagnostics.
+        private static string Path(Transform t)
+        {
+            return t.parent != null ? t.parent.name + "/" + t.name : t.name;
         }
 
         private void StylePanel(Image img)
@@ -179,6 +207,8 @@ namespace ARSandbox.UI
 
         private void StyleText(Text text)
         {
+            Color before = text.color;
+
             // Small + uppercase reads as a label/badge → mono + muted. Otherwise body sans.
             bool isLabel = text.fontSize <= 16 && IsMostlyUpper(text.text);
             Font font = isLabel ? SandboxUITheme.Mono : SandboxUITheme.Sans;
@@ -189,6 +219,16 @@ namespace ARSandbox.UI
             if (IsNeutral(text.color))
             {
                 text.color = isLabel ? SandboxUITheme.TextMuted : SandboxUITheme.TextPrimary;
+            }
+
+            // Diagnostic for the invisible title-text issue: log how each *Title text was
+            // handled (font assigned, colour before/after, active state).
+            if (text.transform.parent != null &&
+                text.transform.parent.name.IndexOf("Title", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                Debug.Log($"[SandboxUIThemer] title text '{Path(text.transform)}' text='{text.text}' " +
+                          $"active={text.isActiveAndEnabled} font={(font != null ? font.name : "NULL")} " +
+                          $"size={text.fontSize} colorBefore={before} colorAfter={text.color}");
             }
         }
 
