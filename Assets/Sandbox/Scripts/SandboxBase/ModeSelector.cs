@@ -19,9 +19,11 @@
 //  along with sensilab-ar-sandbox.  If not, see <https://www.gnu.org/licenses/>.
 //
 
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using ARSandbox.UI;
 
 namespace ARSandbox
 {
@@ -36,34 +38,51 @@ namespace ARSandbox
 
         private GameObject CurrentMode;
 
+        // Fired whenever the active simulation changes (or is disabled back to the
+        // menu). SandboxUIThemer listens to drive the per-simulation accent colour on
+        // the background glow and active controls. Static so the themer can subscribe
+        // without an inspector reference.
+        public static event Action<SandboxSimType> OnModeChanged;
+
+        private static void RaiseModeChanged(SandboxSimType sim)
+        {
+            if (OnModeChanged != null) OnModeChanged(sim);
+        }
+
         public void EnableWindSimulation()
         {
             WindSimulation.gameObject.SetActive(true);
             CurrentMode = WindSimulation.gameObject;
+            RaiseModeChanged(SandboxSimType.Wind);
         }
         public void EnableTopographyBuilder()
         {
             TopographyBuilder.gameObject.SetActive(true);
             CurrentMode = TopographyBuilder.gameObject;
+            RaiseModeChanged(SandboxSimType.Topography);
         }
         public void EnableGeologySimulation()
         {
             GeologySimulation.gameObject.SetActive(true);
             CurrentMode = GeologySimulation.gameObject;
+            RaiseModeChanged(SandboxSimType.Geology);
         }
         public void EnableWaterSimulation()
         {
             WaterSimulation.gameObject.SetActive(true);
             CurrentMode = WaterSimulation.gameObject;
+            RaiseModeChanged(SandboxSimType.Water);
         }
         public void EnableFireSimulation()
         {
             FireSimulation.gameObject.SetActive(true);
             CurrentMode = FireSimulation.gameObject;
+            RaiseModeChanged(SandboxSimType.Fire);
         }
         public void DisableCurrentMode()
         {
             if (CurrentMode != null) CurrentMode.gameObject.SetActive(false);
+            RaiseModeChanged(SandboxSimType.None);
         }
         public void EnableCurrentMode()
         {

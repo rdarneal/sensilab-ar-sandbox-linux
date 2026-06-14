@@ -67,13 +67,16 @@ namespace ARSandbox
         // currRT/prevRT bind to SRV slots; outRT binds to a UAV slot. No same-slot
         // cross-frame read-modify-write — see memory/project_vulkan_uav_counter_hazard.md.
         public static void Run_TemporalLerp(ComputeShader sandboxCS, Texture currRT, Texture prevRT,
-                                            Texture outRT, float smoothingWeight)
+                                            Texture outRT, float smoothingWeight,
+                                            float staticWeight, float noiseThreshold)
         {
             int kernelHandle = sandboxCS.FindKernel(CS_TEMPORAL_LERP);
             sandboxCS.SetTexture(kernelHandle, "TemporalCurrRT", currRT);
             sandboxCS.SetTexture(kernelHandle, "TemporalPrevRT", prevRT);
             sandboxCS.SetTexture(kernelHandle, "TemporalOutRT", outRT);
             sandboxCS.SetFloat("TemporalSmoothingWeight", smoothingWeight);
+            sandboxCS.SetFloat("TemporalStaticWeight", staticWeight);
+            sandboxCS.SetFloat("TemporalNoiseThreshold", noiseThreshold);
 
             int texSizeX = outRT.width;
             int texSizeY = outRT.height;

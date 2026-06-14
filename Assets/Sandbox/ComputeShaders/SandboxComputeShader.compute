@@ -157,14 +157,30 @@ void CS_GaussianBlurVertical (uint3 id : SV_DispatchThreadID)
 Texture2D<float> TemporalCurrRT;
 Texture2D<float> TemporalPrevRT;
 RWTexture2D<float> TemporalOutRT;
+// Responsive weight used when a pixel is genuinely moving (low = snappy).
 float TemporalSmoothingWeight;
+// Sticky weight used when a pixel's change is below the sensor noise floor
+// (high = freezes static jitter). Falls back to TemporalSmoothingWeight when
+// TemporalNoiseThreshold is 0, so behaviour matches the plain EMA in that case.
+float TemporalStaticWeight;
+// Per-pixel frame-to-frame delta (normalised depth units) below which the
+// change is treated as noise rather than real motion.
+float TemporalNoiseThreshold;
 
 [numthreads(16,16,1)]
 void CS_TemporalLerp(uint3 id : SV_DispatchThreadID)
 {
 	float curr = TemporalCurrRT[id.xy];
 	float prev = TemporalPrevRT[id.xy];
-	TemporalOutRT[id.xy] = lerp(curr, prev, TemporalSmoothingWeight);
+
+	// 0 when the pixel barely changed (noise), 1 once the change clears the
+	// threshold (real sculpting). Blend the sticky and responsive weights across
+	// that band so static sand freezes while moving sand stays snappy.
+	float delta = abs(curr - prev);
+	float motion = saturate(delta / max(TemporalNoiseThreshold, 1e-7));
+	float weight = lerp(TemporalStaticWeight, TemporalSmoothingWeight, motion);
+
+	TemporalOutRT[id.xy] = lerp(curr, prev, weight);
 }
 
 // Generate Mesh compute shader

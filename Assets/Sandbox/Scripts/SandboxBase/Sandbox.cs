@@ -58,8 +58,23 @@ namespace ARSandbox
         // higher = sticks to previous frame more, hides per-pixel noise. Clamped < 1 so it
         // can never freeze. Ping-pong source/destination — not the wedged CS_LowPassData
         // pattern, see memory/project_vulkan_uav_counter_hazard.md.
+        // This is the *responsive* weight, used once a pixel clears the noise threshold.
         [Range(0f, 0.95f)]
         public float TemporalSmoothing = 0.75f;
+
+        // Sticky weight applied to pixels whose frame-to-frame change is below
+        // StaticNoiseThreshold — i.e. sand that isn't being touched. Higher = static
+        // contours hold still harder. Pulled toward TemporalSmoothing as a pixel starts
+        // moving, so active sculpting never feels laggy.
+        [Range(0f, 0.99f)]
+        public float TemporalStaticSmoothing = 0.97f;
+
+        // Per-pixel depth change (normalised 0..1 depth units) below which a change is
+        // treated as sensor noise rather than real motion. Set to 0 to disable the gate
+        // and fall back to a plain EMA at TemporalSmoothing. Tune live in Play mode: raise
+        // it if static contours still wobble, lower it if slow sand changes feel sticky.
+        [Range(0f, 0.002f)]
+        public float StaticNoiseThreshold = 0.0006f;
 
         public Vector2 MESH_XY_STRIDE_DS1 { get; private set; }
         public Vector2 MESH_XY_STRIDE_DS2 { get; private set; }
@@ -692,7 +707,8 @@ namespace ARSandbox
                 }
 
                 SandboxCSHelper.Run_TemporalLerp(SandboxProcessingShader, blurredCurrRT, smoothPrevRT,
-                                                 processedDepthsRT, TemporalSmoothing);
+                                                 processedDepthsRT, TemporalSmoothing,
+                                                 TemporalStaticSmoothing, StaticNoiseThreshold);
                 Graphics.CopyTexture(processedDepthsRT, smoothPrevRT);
 
                 SandboxCSHelper.Run_DownsampleRT(SandboxProcessingShader, processedDepthsRT, processedDepthsRT_DS);
